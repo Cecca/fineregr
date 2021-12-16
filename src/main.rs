@@ -1,5 +1,5 @@
-use anyhow::{anyhow, bail, Context, Result};
-use serde::{Deserialize, Serialize};
+use anyhow::{bail, Context, Result};
+use serde_derive::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs::File;
@@ -7,7 +7,6 @@ use std::io::prelude::*;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::str::FromStr;
-use vega_lite_3::*;
 use walkdir::WalkDir;
 
 #[derive(Debug, Deserialize)]
@@ -33,24 +32,38 @@ impl Benchmarker {
     }
 
     fn tmp_dir() -> String {
-        "/tmp/fineregr".to_owned()
-        // tempdir::TempDir::new("fineregr")
-        //     .expect("error creating temprary directory")
-        //     .into_path()
-        //     .to_str()
-        //     .unwrap()
-        //     .to_owned()
+        tempdir::TempDir::new("fineregr")
+            .expect("error creating temprary directory")
+            .into_path()
+            .to_str()
+            .unwrap()
+            .to_owned()
     }
 
     /// Clones the repository as a subdirectory of the current working directory
     fn clone_repo(&self) -> Result<()> {
-        println!("Cloning {} to {}", self.repository, self.repo_dir);
-        Command::new("git")
-            .arg("clone")
-            .arg(&self.repository)
-            .arg(&self.repo_dir)
-            .spawn()?
-            .wait()?;
+        if PathBuf::from_str(&self.repo_dir)?.is_dir() {
+            println!("Pulling latest changes from {}", self.repository);
+            Command::new("git")
+                .arg("checkout")
+                .arg("main")
+                .current_dir(&self.repo_dir)
+                .spawn()?
+                .wait()?;
+            Command::new("git")
+                .arg("pull")
+                .current_dir(&self.repo_dir)
+                .spawn()?
+                .wait()?;
+        } else {
+            println!("Cloning {} to {}", self.repository, self.repo_dir);
+            Command::new("git")
+                .arg("clone")
+                .arg(&self.repository)
+                .arg(&self.repo_dir)
+                .spawn()?
+                .wait()?;
+        }
 
         Ok(())
     }
@@ -123,12 +136,12 @@ impl Benchmarker {
     }
 
     fn run(&self) -> Result<()> {
-        // self.clone_repo()?;
+        self.clone_repo()?;
         let out_dir = std::env::current_dir()?.join("results");
         if !out_dir.is_dir() {
             std::fs::create_dir_all(&out_dir)?;
         }
-        for sha in self.get_commits()?.into_iter().take(20) {
+        for sha in self.get_commits()?.into_iter().take(3) {
             self.checkout(&sha)?;
 
             for bench in &self.benchmarks {
@@ -148,7 +161,7 @@ impl Benchmarker {
                                 .arg("--export-json")
                                 .arg(&json_file)
                                 .arg("--warmup")
-                                .arg("5")
+                                .arg("1")
                                 .arg(bench)
                                 .current_dir(&self.repo_dir)
                                 .spawn()?
@@ -182,7 +195,12 @@ impl Benchmarker {
         let mut plotdata: Vec<PlotData> = Vec::new();
         for json_path in WalkDir::new(&out_dir) {
             let json_path = json_path?.into_path();
-            if json_path.is_file() && json_path.extension().map(|ext| ext.to_str().unwrap() == "json").unwrap_or(false) {
+            if json_path.is_file()
+                && json_path
+                    .extension()
+                    .map(|ext| ext.to_str().unwrap() == "json")
+                    .unwrap_or(false)
+            {
                 let git_sha = json_path
                     .file_name()
                     .context("getting file name")?
@@ -229,14 +247,17 @@ impl Benchmarker {
                 "description": "",
                 "data": {"values": plotdata},
                 "mark": {
-                  "type": "point",
-                  "extent": "min-max"
+                  "type": "point"
                 },
                 "config": {
                   "mark": {"invalid": null}
                 },
                 "encoding": {
-                  "x": {"field": "git_date", "type": "nominal"},
+                  "x": {
+                    "field": "git_date", 
+                    "type": "nominal",
+                    "axis": {"labels": false}
+                  },
                   "y": {
                     "field": "time",
                     "type": "quantitative",
@@ -253,14 +274,16 @@ impl Benchmarker {
                       "value": "#f00"
                     }
                   },
-                  "row": {
-                    "field": "command"
+                  "facet": {
+                    "field": "command",
+                    "type": "nominal",
+                    "columns": 1
                   }
                 }
               }
         );
         let mut f = File::create(out_dir.join("index.html"))?;
-        write!(f,include_str!("index.html"), vega_spec)?;
+        write!(f, include_str!("index.html"), vega_spec)?;
         Ok(())
     }
 }

@@ -1,3 +1,7 @@
 repository = "git@gitlab.inf.unibz.it:premise/attimo-rs.git"
-prepare = ["cargo +nightly build --release"]
-benchmarks = ["target/release/attimo -w 1000 --repetitions 50 data/ECG-10000.csv"]
+repo_dir = "/tmp/Attimo-rs"
+prepare = [
+    "rsync --progress -z ironmaiden.inf.unibz.it:ECG.csv data/ECG.csv",
+    "cargo +nightly build --release"
+]
+benchmarks = ["target/release/attimo -w 1000 --repetitions 50 --prefix 100000 data/ECG.csv"]
