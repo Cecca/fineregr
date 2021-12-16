@@ -20,6 +20,7 @@ struct Benchmarker {
     /// The directory where the repository is cloned
     #[serde(default = "Benchmarker::tmp_dir")]
     repo_dir: String,
+    num_commits: Option<usize>
 }
 
 impl Benchmarker {
@@ -141,7 +142,7 @@ impl Benchmarker {
         if !out_dir.is_dir() {
             std::fs::create_dir_all(&out_dir)?;
         }
-        for sha in self.get_commits()?.into_iter().take(3) {
+        for sha in self.get_commits()?.into_iter().take(self.num_commits.unwrap_or(usize::MAX)) {
             self.checkout(&sha)?;
 
             for bench in &self.benchmarks {

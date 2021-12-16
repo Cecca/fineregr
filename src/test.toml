@@ -5,3 +5,4 @@ prepare = [
     "cargo +nightly build --release"
 ]
 benchmarks = ["target/release/attimo -w 1000 --repetitions 50 --prefix 100000 data/ECG.csv"]
+num_commits = 4
