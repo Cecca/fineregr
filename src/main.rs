@@ -20,7 +20,7 @@ struct Benchmarker {
     /// The directory where the repository is cloned
     #[serde(default = "Benchmarker::tmp_dir")]
     repo_dir: String,
-    num_commits: Option<usize>
+    num_commits: Option<usize>,
 }
 
 impl Benchmarker {
@@ -142,7 +142,11 @@ impl Benchmarker {
         if !out_dir.is_dir() {
             std::fs::create_dir_all(&out_dir)?;
         }
-        for sha in self.get_commits()?.into_iter().take(self.num_commits.unwrap_or(usize::MAX)) {
+        for sha in self
+            .get_commits()?
+            .into_iter()
+            .take(self.num_commits.unwrap_or(usize::MAX))
+        {
             self.checkout(&sha)?;
 
             for bench in &self.benchmarks {
@@ -219,28 +223,31 @@ impl Benchmarker {
                     .replace(".json", "");
                 let git_msg = self.commit_message(&git_sha)?;
                 let git_date = self.commit_date(&git_sha)?;
-                let rf: ResultFile = serde_json::from_reader(File::open(&json_path)?)?;
-                for res in rf.results {
-                    let command = res.command;
-                    if let Some(times) = res.times {
-                        for time in times {
+                if let Ok(rf) = serde_json::from_reader::<_, ResultFile>(File::open(&json_path)?) {
+                    for res in rf.results {
+                        let command = res.command;
+                        if let Some(times) = res.times {
+                            for time in times {
+                                plotdata.push(PlotData {
+                                    git_sha: git_sha.clone(),
+                                    git_msg: git_msg.clone(),
+                                    git_date: git_date.clone(),
+                                    command: command.clone(),
+                                    time: Some(time),
+                                })
+                            }
+                        } else {
                             plotdata.push(PlotData {
                                 git_sha: git_sha.clone(),
                                 git_msg: git_msg.clone(),
                                 git_date: git_date.clone(),
                                 command: command.clone(),
-                                time: Some(time),
+                                time: None,
                             })
                         }
-                    } else {
-                        plotdata.push(PlotData {
-                            git_sha: git_sha.clone(),
-                            git_msg: git_msg.clone(),
-                            git_date: git_date.clone(),
-                            command: command.clone(),
-                            time: None,
-                        })
                     }
+                } else {
+                    eprintln!("Error deserializing {:?}", json_path);
                 }
             }
         }
@@ -258,7 +265,7 @@ impl Benchmarker {
                 },
                 "encoding": {
                   "x": {
-                    "field": "git_date", 
+                    "field": "git_date",
                     "type": "nominal",
                     "axis": {"labels": false}
                   },
