@@ -189,10 +189,19 @@ impl Benchmarker {
                         write!(f, "{}", json_data)?;
                     }
                 }
+
+                // Update the plot
+                self.plot(&out_dir)?;
             }
         }
 
-        // Now process the results
+        // Update the plot, just in case we changed the plotting code but not the benchmarks
+        self.plot(&out_dir)?;
+
+        Ok(())
+    }
+
+    fn plot(&self, out_dir: &PathBuf) -> Result<()> {
         let mut plotdata: Vec<PlotData> = Vec::new();
         for json_path in WalkDir::new(&out_dir) {
             let json_path = json_path?.into_path();
@@ -236,12 +245,6 @@ impl Benchmarker {
             }
         }
 
-        self.plot(plotdata, &out_dir)?;
-
-        Ok(())
-    }
-
-    fn plot(&self, plotdata: Vec<PlotData>, out_dir: &PathBuf) -> Result<()> {
         let vega_spec = json!(
             {
                 "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
