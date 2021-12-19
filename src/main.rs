@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use serde_derive::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -136,6 +136,37 @@ impl Benchmarker {
         String::from_utf8(output.stdout).context("decoding git message")
     }
 
+    fn change_count(&self, sha: &str) -> Result<usize> {
+        let output = Command::new("git")
+            .arg("show")
+            .arg("--shortstat")
+            .arg(sha)
+            .current_dir(&self.repo_dir)
+            .stdout(Stdio::piped())
+            .spawn()?
+            .wait_with_output()?;
+        ensure!(output.status.success());
+        let rex_insertions = regex::Regex::new("(\\d+) insertion").unwrap();
+        let rex_deletions = regex::Regex::new("(\\d+) insertion").unwrap();
+        if let Some(changeline) = String::from_utf8(output.stdout)?
+            .lines()
+            .find(|l| l.contains("changed"))
+        {
+            let ins = rex_insertions
+                .captures(&changeline)
+                .map(|c| c.get(1).unwrap().as_str().parse::<usize>().unwrap())
+                .unwrap_or(0);
+            let del = rex_deletions
+                .captures(&changeline)
+                .map(|c| c.get(1).unwrap().as_str().parse::<usize>().unwrap())
+                .unwrap_or(0);
+            Ok(ins + del)
+        } else {
+            Ok(0)
+        }
+
+    }
+
     fn run(&self) -> Result<()> {
         self.clone_repo()?;
         let out_dir = std::env::current_dir()?.join("results");
@@ -186,6 +217,7 @@ impl Benchmarker {
                                     "git_sha": sha,
                                     "git_msg": self.commit_message(&sha)?,
                                     "git_date": self.commit_date(&sha)?,
+                                    "git_changes": self.change_count(&sha)?
                                 }
                             ]
                         });
@@ -223,6 +255,7 @@ impl Benchmarker {
                     .replace(".json", "");
                 let git_msg = self.commit_message(&git_sha)?;
                 let git_date = self.commit_date(&git_sha)?;
+                let change_count = self.change_count(&git_sha)?;
                 if let Ok(rf) = serde_json::from_reader::<_, ResultFile>(File::open(&json_path)?) {
                     for res in rf.results {
                         let command = res.command;
@@ -232,7 +265,8 @@ impl Benchmarker {
                                     git_sha: git_sha.clone(),
                                     git_msg: git_msg.clone(),
                                     git_date: git_date.clone(),
-                                    command: command.clone(),
+                                    git_changes: change_count,
+                                    command: Some(command.clone()),
                                     time: Some(time),
                                 })
                             }
@@ -241,12 +275,21 @@ impl Benchmarker {
                                 git_sha: git_sha.clone(),
                                 git_msg: git_msg.clone(),
                                 git_date: git_date.clone(),
-                                command: command.clone(),
+                                git_changes: change_count,
+                                command: Some(command.clone()),
                                 time: None,
                             })
                         }
                     }
                 } else {
+                    plotdata.push(PlotData {
+                        git_sha: git_sha.clone(),
+                        git_msg: git_msg.clone(),
+                        git_date: git_date.clone(),
+                        git_changes: change_count,
+                        command: None,
+                        time: None,
+                    });
                     eprintln!("Error deserializing {:?}", json_path);
                 }
             }
@@ -257,40 +300,51 @@ impl Benchmarker {
                 "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
                 "description": "",
                 "data": {"values": plotdata},
-                "mark": {
-                  "type": "point"
-                },
-                "config": {
-                  "mark": {"invalid": null}
-                },
-                "encoding": {
-                  "x": {
-                    "field": "git_date",
-                    "type": "nominal",
-                    "axis": {"labels": false}
-                  },
-                  "y": {
-                    "field": "time",
-                    "type": "quantitative",
-                    "scale": {"zero": false}
-                  },
-                  "tooltip": [
-                    {"field": "git_msg", "type": "nominal"},
-                    {"field": "git_date", "type": "nominal"},
-                    {"field": "git_sha", "type": "nominal"}
-                  ],
-                  "color": {
-                    "condition": {
-                      "test": "datum['time'] === null",
-                      "value": "#f00"
+                "vconcat": [
+                    // Selector rectangles for commits
+                    {
+                        "mark": "rect",
+                        "encoding": {
+                            "x": {"field": "git_date", "type": "nominal", "axis": {"labels": false, "title": "", "ticks": false}},
+                            "color": {"field": "git_changes", "type": "quantitative"}
+                        },
+                        "params": [{
+                            "name": "brush",
+                            "select": {"type": "interval", "encodings": ["x"]}
+                        }],
+                    },
+                    // Faceted visualization of performance
+                    {
+                    "facet": {"field": "command", "title": ""},
+                        "columns": 1,
+                        "spec": {
+                        "layer": [
+                            {
+                                "mark": {"type": "point"},
+                                "transform": [
+                                    {"filter": {"param": "brush"}}
+                                ],
+                                "encoding": {
+                                    "color": {"condition": {"test": "datum['time'] === null", "value": "#f00"}},
+                                    "tooltip": [
+                                        {"field": "git_msg", "type": "nominal"},
+                                        {"field": "git_date", "type": "nominal"},
+                                        {"field": "git_sha", "type": "nominal"},
+                                        {"field": "git_changes", "type": "quantitative"},
+                                        {"field": "time", "type": "quantitative"}
+                                    ],
+                                    "x": {
+                                        "axis": {"labels": false}, 
+                                        "field": "git_date", 
+                                        "type": "nominal",
+                                    },
+                                    "y": {"field": "time", "scale": {"zero": false}, "type": "quantitative"}
+                                }
+                            }
+                        ]
+                        }
                     }
-                  },
-                  "facet": {
-                    "field": "command",
-                    "type": "nominal",
-                    "columns": 1
-                  }
-                }
+                ]
               }
         );
         let mut f = File::create(out_dir.join("index.html"))?;
@@ -304,7 +358,8 @@ struct PlotData {
     git_sha: String,
     git_msg: String,
     git_date: String,
-    command: String,
+    git_changes: usize,
+    command: Option<String>,
     time: Option<f64>,
 }
 
